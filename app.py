@@ -65,7 +65,8 @@ def carregar_recursos_ml():
 @st.cache_data
 def dados_fallback():
     """Dados simulados caso não haja upload de ficheiro."""
-    horas = pd.date_range(end=datetime.now(), periods=10, freq='H')
+    # CORREÇÃO AQUI: freq='h' minúsculo
+    horas = pd.date_range(end=datetime.now(), periods=10, freq='h')
     return pd.DataFrame({
         'Hora': horas,
         'Temperatura': np.random.uniform(70, 85, 10),
@@ -168,7 +169,8 @@ with st.sidebar:
                 if 'Hora' in df_real.columns:
                     df_real['Hora'] = pd.to_datetime(df_real['Hora'])
                 else:
-                    df_real['Hora'] = pd.date_range(end=datetime.now(), periods=len(df_real), freq='H')
+                    # CORREÇÃO AQUI: freq='h' minúsculo
+                    df_real['Hora'] = pd.date_range(end=datetime.now(), periods=len(df_real), freq='h')
                 
                 st.session_state.df = df_real
                 st.success("Dados carregados com sucesso!")
@@ -363,7 +365,7 @@ with c_recomend:
     st.download_button(
         label="📄 Descarregar Relatório em PDF",
         data=pdf_bytes,
-        file_name=f"relatorio_adécio_alberto_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+        file_name=f"relatorio_adecio_alberto_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
         mime="application/pdf",
         use_container_width=True
     )
