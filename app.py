@@ -52,7 +52,6 @@ st.markdown("""
 # ==========================================
 @st.cache_resource
 def carregar_recursos_ml():
-    """Carrega o Scaler, Selector e Modelo."""
     base_path = Path(__file__).parent
     try:
         scaler = joblib.load(base_path / 'scaler.joblib')
@@ -64,34 +63,31 @@ def carregar_recursos_ml():
 
 @st.cache_data
 def dados_fallback():
-    """Dados simulados caso não haja upload de ficheiro."""
+    """Dados simulados com picos de alerta para a tabela ficar realista."""
     horas = pd.date_range(end=datetime.now(), periods=10, freq='h')
     return pd.DataFrame({
         'Hora': horas,
-        'Temperatura': np.random.uniform(70, 85, 10),
-        'Pressao': np.random.uniform(3.0, 4.0, 10),
-        'Vibracao': np.random.uniform(5.0, 6.5, 10)
+        # Temperatura: alguns picos acima de 95 (crítico)
+        'Temperatura': [70, 72, 75, 78, 85, 90, 96, 92, 88, 82],
+        # Pressão: pico acima de 5.5 (alerta)
+        'Pressao': [3.0, 3.1, 3.2, 3.5, 4.0, 4.5, 5.8, 5.6, 4.2, 3.9],
+        # Vibração: pico acima de 9.0 (crítico)
+        'Vibracao': [5.0, 5.1, 5.2, 5.5, 6.0, 7.5, 9.2, 8.5, 7.0, 6.5]
     })
 
 def prever_falha(df, scaler, selector, modelo):
-    """Pipeline Real: Dados -> Tradução -> Scaler -> Selector -> Random Forest"""
-    # 1. Seleciona os dados e traduz os nomes para o que o modelo espera (minúsculas)
     features_df = df[['Temperatura', 'Pressao', 'Vibracao']].tail(1).copy()
     features_df.columns = ['temperature', 'pressure', 'vibration']
     
     if scaler is not None and selector is not None and modelo is not None:
         try:
-            # 2. Escalonamento
             X_scaled = scaler.transform(features_df)
-            # 3. Seleção de Features
             X_selected = selector.transform(X_scaled)
-            # 4. Previsão
             prob = modelo.predict_proba(X_selected)[0][1] * 100
         except Exception as e:
             st.sidebar.error(f"Erro na inferência ML: {e}")
             prob = 15.0
     else:
-        # Fallback Simulado (se os ficheiros .joblib não forem encontrados)
         prob = 18.0 if (features_df['temperature'].values[0] < 85) else 75.0
         
     if prob < 25: risco, cor = "Baixo", "#42dd8b"
@@ -101,34 +97,26 @@ def prever_falha(df, scaler, selector, modelo):
     return prob, risco, cor
 
 def gerar_pdf(df, prob_falha, risco):
-    """Gera um relatório PDF com os dados e o resultado do modelo."""
     pdf = FPDF()
     pdf.add_page()
-    
-    # Cabeçalho (sem acentos para não quebrar o PDF)
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(200, 10, txt="Relatorio de Manutencao Preditiva", ln=True, align='C')
     pdf.set_font("Arial", size=11)
     pdf.cell(200, 10, txt="Responsavel: Adecio Alberto", ln=True, align='C')
     pdf.cell(200, 10, txt=f"Data de Emissao: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align='C')
     pdf.ln(5)
-    
-    # Resumo
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(200, 10, txt="Resumo do Diagnostico", ln=True)
     pdf.set_font("Arial", size=11)
     pdf.cell(200, 8, txt=f"Probabilidade de Falha: {prob_falha:.2f}%", ln=True)
     pdf.cell(200, 8, txt=f"Nivel de Risco: {risco}", ln=True)
     pdf.ln(10)
-    
-    # Tabela de Histórico
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(40, 10, "Hora", border=1)
     pdf.cell(40, 10, "Temp (C)", border=1)
     pdf.cell(40, 10, "Pressao (bar)", border=1)
     pdf.cell(40, 10, "Vibracao (mm/s)", border=1)
     pdf.ln()
-    
     pdf.set_font("Arial", size=9)
     for _, row in df.tail(20).iterrows():
         hora_str = row['Hora'].strftime('%d/%m %H:%M') if pd.notnull(row['Hora']) else '-'
@@ -137,7 +125,6 @@ def gerar_pdf(df, prob_falha, risco):
         pdf.cell(40, 10, f"{row['Pressao']:.2f}", border=1)
         pdf.cell(40, 10, f"{row['Vibracao']:.2f}", border=1)
         pdf.ln()
-
     return bytes(pdf.output())
 
 # ==========================================
@@ -151,7 +138,6 @@ with st.sidebar:
         st.warning("Adicione 'logo_kenmare.png' e 'logo_uem.png' à pasta.")
     
     st.divider()
-    
     st.markdown("### 📁 Fonte de Dados")
     uploaded_file = st.file_uploader("Upload CSV ou Excel", type=["csv", "xlsx"])
     
@@ -162,11 +148,7 @@ with st.sidebar:
             else:
                 df_real = pd.read_excel(uploaded_file)
             
-            # Normalização de nomes de colunas
-            # (Assume que se o ficheiro vier com nomes em inglês, nós traduzimos para português na UI)
             df_real.columns = [c.capitalize() for c in df_real.columns]
-            
-            # Caso o ficheiro já venha em inglês, renomeia para a UI em português
             if 'Temperature' in df_real.columns: df_real.rename(columns={'Temperature': 'Temperatura'}, inplace=True)
             if 'Pressure' in df_real.columns: df_real.rename(columns={'Pressure': 'Pressao'}, inplace=True)
             if 'Vibration' in df_real.columns: df_real.rename(columns={'Vibration': 'Vibracao'}, inplace=True)
@@ -283,12 +265,10 @@ c_temp, c_press, c_vib = st.columns(3)
 def plot_time_series(df, col, title, unit, limit, color):
     fig = go.Figure()
     df_plot = df.tail(20)
-    
     fig.add_trace(go.Scatter(x=df_plot['Hora'], y=df_plot[col], mode='lines+markers',
                              name=col, line=dict(color=color, width=3), marker=dict(size=6)))
     fig.add_trace(go.Scatter(x=df_plot['Hora'], y=[limit]*len(df_plot), mode='lines',
                              name='Limite', line=dict(color='#ff626d', width=2, dash='dash')))
-    
     fig.update_layout(
         title=dict(text=title, font=dict(size=14, color='#f4f6ff')),
         paper_bgcolor='#0c1438', plot_bgcolor='#0c1438',
@@ -312,11 +292,41 @@ with c_vib:
 c_alerts, c_recomend = st.columns([2, 1])
 
 with c_alerts:
+    # --- LÓGICA MELHORADA DE ALERTAS ---
+    # 1. Procura anomalias no histórico
+    alertas_df = df[
+        (df['Temperatura'] >= 95) | 
+        (df['Pressao'] >= 5.5) | 
+        (df['Vibracao'] >= 9.0)
+    ]
+    
+    # 2. Se não houver anomalias, mostra os últimos 3 normais para a tabela não ficar vazia
+    if len(alertas_df) == 0:
+        alertas_df = df.tail(3)
+    
+    # 3. Fica apenas com os 3 mais recentes (sejam alertas ou normais) e inverte a ordem
+    alertas_recentes = alertas_df.tail(3).iloc[::-1]
+
     rows_html = ""
-    for _, row in df.tail(3).iloc[::-1].iterrows():
-        status = "Normal" if row['Temperatura'] < 85 else "Crítico"
-        badge = "badge-normal" if status == "Normal" else "badge-critico"
-        msg = "Condição estável" if status == "Normal" else "Temperatura elevada"
+    for _, row in alertas_recentes.iterrows():
+        # Lógica de classificação por parâmetro
+        if row['Temperatura'] >= 95:
+            status = "Crítico"
+            badge = "badge-critico"
+            msg = "Temperatura crítica detectada"
+        elif row['Vibracao'] >= 9.0:
+            status = "Crítico"
+            badge = "badge-critico"
+            msg = "Vibração excessiva detectada"
+        elif row['Pressao'] >= 5.5:
+            status = "Alerta"
+            badge = "badge-alerta"
+            msg = "Pressão acima do normal"
+        else:
+            status = "Normal"
+            badge = "badge-normal"
+            msg = "Condição estável"
+            
         hora_str = row['Hora'].strftime('%d/%m/%Y %H:%M') if pd.notnull(row['Hora']) else '-'
         
         rows_html += f"""
@@ -331,7 +341,7 @@ with c_alerts:
     st.markdown(f"""
     <div class="custom-card" style="padding: 15px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-            <h3 style="margin: 0; font-size: 16px;">🔔 Histórico de Alertas (Últimos 3)</h3>
+            <h3 style="margin: 0; font-size: 16px;">🔔 Histórico de Alertas (Mais Recentes)</h3>
         </div>
         <table class="alert-table">
             <tr>
