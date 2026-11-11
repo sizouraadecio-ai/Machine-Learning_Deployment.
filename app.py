@@ -52,20 +52,19 @@ st.markdown("""
 # ==========================================
 @st.cache_resource
 def carregar_recursos_ml():
-    """Carrega o Scaler, Selector e Modelo. Retorna None se não encontrar."""
+    """Carrega o Scaler, Selector e Modelo."""
     base_path = Path(__file__).parent
     try:
         scaler = joblib.load(base_path / 'scaler.joblib')
         selector = joblib.load(base_path / 'selector.joblib')
         modelo = joblib.load(base_path / 'random_forest_model.joblib')
         return scaler, selector, modelo
-    except Exception as e:
+    except Exception:
         return None, None, None
 
 @st.cache_data
 def dados_fallback():
     """Dados simulados caso não haja upload de ficheiro."""
-    # CORREÇÃO AQUI: freq='h' minúsculo
     horas = pd.date_range(end=datetime.now(), periods=10, freq='h')
     return pd.DataFrame({
         'Hora': horas,
@@ -75,24 +74,25 @@ def dados_fallback():
     })
 
 def prever_falha(df, scaler, selector, modelo):
-    """Pipeline Real: Dados -> Scaler -> Selector -> Random Forest"""
-    features = ['Temperatura', 'Pressao', 'Vibracao']
-    ultima_linha = df[features].tail(1)
+    """Pipeline Real: Dados -> Tradução -> Scaler -> Selector -> Random Forest"""
+    # 1. Seleciona os dados e traduz os nomes para o que o modelo espera (minúsculas)
+    features_df = df[['Temperatura', 'Pressao', 'Vibracao']].tail(1).copy()
+    features_df.columns = ['temperature', 'pressure', 'vibration']
     
     if scaler is not None and selector is not None and modelo is not None:
         try:
-            # 1. Escalonamento
-            X_scaled = scaler.transform(ultima_linha)
-            # 2. Seleção de Features
+            # 2. Escalonamento
+            X_scaled = scaler.transform(features_df)
+            # 3. Seleção de Features
             X_selected = selector.transform(X_scaled)
-            # 3. Previsão
+            # 4. Previsão
             prob = modelo.predict_proba(X_selected)[0][1] * 100
         except Exception as e:
             st.sidebar.error(f"Erro na inferência ML: {e}")
-            prob = 15.0 # Fallback em caso de erro nas features
+            prob = 15.0
     else:
         # Fallback Simulado (se os ficheiros .joblib não forem encontrados)
-        prob = 18.0 if (ultima_linha['Temperatura'].values[0] < 85) else 75.0
+        prob = 18.0 if (features_df['temperature'].values[0] < 85) else 75.0
         
     if prob < 25: risco, cor = "Baixo", "#42dd8b"
     elif prob < 60: risco, cor = "Médio", "#ffc95e"
@@ -105,20 +105,20 @@ def gerar_pdf(df, prob_falha, risco):
     pdf = FPDF()
     pdf.add_page()
     
-    # Cabeçalho
+    # Cabeçalho (sem acentos para não quebrar o PDF)
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, txt="Relatório de Manutenção Preditiva", ln=True, align='C')
+    pdf.cell(200, 10, txt="Relatorio de Manutencao Preditiva", ln=True, align='C')
     pdf.set_font("Arial", size=11)
-    pdf.cell(200, 10, txt="Responsável: Adécio Alberto", ln=True, align='C')
-    pdf.cell(200, 10, txt=f"Data de Emissão: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align='C')
+    pdf.cell(200, 10, txt="Responsavel: Adecio Alberto", ln=True, align='C')
+    pdf.cell(200, 10, txt=f"Data de Emissao: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align='C')
     pdf.ln(5)
     
     # Resumo
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt="Resumo do Diagnóstico", ln=True)
+    pdf.cell(200, 10, txt="Resumo do Diagnostico", ln=True)
     pdf.set_font("Arial", size=11)
     pdf.cell(200, 8, txt=f"Probabilidade de Falha: {prob_falha:.2f}%", ln=True)
-    pdf.cell(200, 8, txt=f"Nível de Risco: {risco}", ln=True)
+    pdf.cell(200, 8, txt=f"Nivel de Risco: {risco}", ln=True)
     pdf.ln(10)
     
     # Tabela de Histórico
@@ -130,7 +130,7 @@ def gerar_pdf(df, prob_falha, risco):
     pdf.ln()
     
     pdf.set_font("Arial", size=9)
-    for _, row in df.tail(20).iterrows(): # Últimos 20 registos
+    for _, row in df.tail(20).iterrows():
         hora_str = row['Hora'].strftime('%d/%m %H:%M') if pd.notnull(row['Hora']) else '-'
         pdf.cell(40, 10, hora_str, border=1)
         pdf.cell(40, 10, f"{row['Temperatura']:.1f}", border=1)
@@ -138,7 +138,7 @@ def gerar_pdf(df, prob_falha, risco):
         pdf.cell(40, 10, f"{row['Vibracao']:.2f}", border=1)
         pdf.ln()
 
-    return pdf.output(dest='S').encode('latin-1')
+    return bytes(pdf.output())
 
 # ==========================================
 # 4. SIDEBAR E GESTÃO DE DADOS
@@ -162,14 +162,19 @@ with st.sidebar:
             else:
                 df_real = pd.read_excel(uploaded_file)
             
-            # Normalização básica de colunas
+            # Normalização de nomes de colunas
+            # (Assume que se o ficheiro vier com nomes em inglês, nós traduzimos para português na UI)
             df_real.columns = [c.capitalize() for c in df_real.columns]
             
+            # Caso o ficheiro já venha em inglês, renomeia para a UI em português
+            if 'Temperature' in df_real.columns: df_real.rename(columns={'Temperature': 'Temperatura'}, inplace=True)
+            if 'Pressure' in df_real.columns: df_real.rename(columns={'Pressure': 'Pressao'}, inplace=True)
+            if 'Vibration' in df_real.columns: df_real.rename(columns={'Vibration': 'Vibracao'}, inplace=True)
+
             if 'Temperatura' in df_real.columns and 'Pressao' in df_real.columns and 'Vibracao' in df_real.columns:
                 if 'Hora' in df_real.columns:
                     df_real['Hora'] = pd.to_datetime(df_real['Hora'])
                 else:
-                    # CORREÇÃO AQUI: freq='h' minúsculo
                     df_real['Hora'] = pd.date_range(end=datetime.now(), periods=len(df_real), freq='h')
                 
                 st.session_state.df = df_real
@@ -277,7 +282,7 @@ c_temp, c_press, c_vib = st.columns(3)
 
 def plot_time_series(df, col, title, unit, limit, color):
     fig = go.Figure()
-    df_plot = df.tail(20) # Mostra os últimos 20 registos
+    df_plot = df.tail(20)
     
     fig.add_trace(go.Scatter(x=df_plot['Hora'], y=df_plot[col], mode='lines+markers',
                              name=col, line=dict(color=color, width=3), marker=dict(size=6)))
@@ -360,7 +365,6 @@ with c_recomend:
     </div>
     """, unsafe_allow_html=True)
     
-    # BOTÃO DE EXPORTAR PDF
     pdf_bytes = gerar_pdf(df, prob_falha, risco)
     st.download_button(
         label="📄 Descarregar Relatório em PDF",
